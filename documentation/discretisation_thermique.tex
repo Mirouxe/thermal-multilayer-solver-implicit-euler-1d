@@ -1,0 +1,732 @@
+\documentclass[11pt,a4paper]{article}
+
+% Packages essentiels
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{physics}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{tcolorbox}
+\usepackage{booktabs}
+\usepackage{geometry}
+\usepackage{fancyhdr}
+\usepackage{hyperref}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,calc}
+
+% Configuration de la page
+\geometry{margin=2.5cm}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\textit{Discrétisation de l'équation de la chaleur 1D}}
+\fancyhead[R]{\textit{Schéma implicite}}
+\fancyfoot[C]{\thepage}
+
+% Couleurs
+\definecolor{bleu}{RGB}{0,82,155}
+\definecolor{rouge}{RGB}{180,0,0}
+\definecolor{vert}{RGB}{0,120,60}
+
+% Environnements personnalisés
+\tcbuselibrary{theorems,skins,breakable}
+
+\newtcbtheorem[number within=section]{hypothese}{Hypothèse}{
+    colback=blue!5,colframe=bleu,fonttitle=\bfseries,
+    separator sign={~:}
+}{hyp}
+
+\newtcbtheorem[number within=section]{remarque}{Remarque}{
+    colback=green!5,colframe=vert,fonttitle=\bfseries,
+    separator sign={~:}
+}{rem}
+
+\newtcbtheorem[number within=section]{definition}{Définition}{
+    colback=gray!5,colframe=gray!50!black,fonttitle=\bfseries,
+    separator sign={~:}
+}{def}
+
+\newcommand{\dd}{\mathrm{d}}
+\newcommand{\pp}{\partial}
+
+% Titre
+\title{
+    \vspace{-1cm}
+    {\LARGE \textbf{Discrétisation de l'équation de la chaleur 1D}} \\[0.5cm]
+    {\large Schéma aux différences finies implicite (Euler arrière)} \\[0.3cm]
+    {\normalsize Application aux milieux multicouches avec propriétés variables}
+}
+\author{Documentation technique du solveur thermique}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Ce document présente la dérivation complète du schéma numérique utilisé pour résoudre l'équation de la chaleur 1D transitoire dans un milieu multicouche. Partant de l'équation aux dérivées partielles continue, nous développons pas à pas la discrétisation spatiale par différences finies centrées et la discrétisation temporelle par schéma d'Euler implicite. Les conditions aux limites (Dirichlet, Neumann, convection, rayonnement) sont traitées en détail, ainsi que la linéarisation nécessaire pour les termes non-linéaires.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+%==============================================================================
+\section{Équation de la chaleur continue}
+%==============================================================================
+
+\subsection{Formulation générale}
+
+L'équation de la chaleur en une dimension d'espace, pour un milieu dont les propriétés thermophysiques dépendent de la température, s'écrit :
+
+\begin{tcolorbox}[colback=blue!5,colframe=bleu,title=\textbf{Équation de la chaleur 1D}]
+\begin{equation}
+\rho(T) \, c_p(T) \, \frac{\partial T}{\partial t} = \frac{\partial}{\partial x}\left[k(T) \, \frac{\partial T}{\partial x}\right]
+\label{eq:chaleur}
+\end{equation}
+\end{tcolorbox}
+
+où :
+\begin{itemize}
+    \item $T(x,t)$ : température [K]
+    \item $\rho(T)$ : masse volumique [kg/m³]
+    \item $c_p(T)$ : capacité thermique massique à pression constante [J/(kg·K)]
+    \item $k(T)$ : conductivité thermique [W/(m·K)]
+    \item $x$ : coordonnée spatiale [m]
+    \item $t$ : temps [s]
+\end{itemize}
+
+\subsection{Origine physique}
+
+Cette équation découle de la combinaison de deux principes fondamentaux :
+
+\subsubsection{Conservation de l'énergie}
+
+Pour un volume de contrôle infinitésimal de section $A$ et de longueur $\dd x$, le bilan d'énergie s'écrit :
+
+\begin{equation}
+\underbrace{\rho \, c_p \, A \, \dd x \, \frac{\partial T}{\partial t}}_{\text{Variation d'énergie interne}} = \underbrace{q(x) \cdot A - q(x+\dd x) \cdot A}_{\text{Flux net entrant}}
+\end{equation}
+
+En développant au premier ordre : $q(x+\dd x) = q(x) + \frac{\partial q}{\partial x} \dd x$, on obtient :
+
+\begin{equation}
+\rho \, c_p \, \frac{\partial T}{\partial t} = -\frac{\partial q}{\partial x}
+\end{equation}
+
+\subsubsection{Loi de Fourier}
+
+Le flux de chaleur par conduction est proportionnel au gradient de température :
+
+\begin{equation}
+q = -k(T) \, \frac{\partial T}{\partial x}
+\label{eq:fourier}
+\end{equation}
+
+Le signe négatif traduit le fait que la chaleur se propage des zones chaudes vers les zones froides.
+
+En substituant \eqref{eq:fourier} dans le bilan d'énergie, on retrouve l'équation \eqref{eq:chaleur}.
+
+\subsection{Cas particulier : propriétés constantes}
+
+Si les propriétés sont indépendantes de la température, l'équation se simplifie :
+
+\begin{equation}
+\frac{\partial T}{\partial t} = \alpha \, \frac{\partial^2 T}{\partial x^2}
+\end{equation}
+
+où $\alpha = \frac{k}{\rho c_p}$ [m²/s] est la \textbf{diffusivité thermique}.
+
+%==============================================================================
+\section{Discrétisation spatiale}
+%==============================================================================
+
+\subsection{Maillage}
+
+\begin{hypothese}{Maillage uniforme}{}
+Le domaine spatial $[0, L]$ est discrétisé en $N_x$ nœuds uniformément espacés :
+\begin{equation}
+x_i = i \cdot \Delta x, \quad i = 0, 1, \ldots, N_x-1, \quad \Delta x = \frac{L}{N_x - 1}
+\end{equation}
+\end{hypothese}
+
+\begin{center}
+\begin{tikzpicture}[scale=1.2]
+    % Ligne principale
+    \draw[thick] (0,0) -- (10,0);
+    
+    % Nœuds
+    \foreach \i in {0,1,2,3,4,5,6,7,8,9,10} {
+        \draw[fill=bleu] (\i,0) circle (2pt);
+    }
+    
+    % Labels
+    \node[below] at (0,-0.3) {$x_0$};
+    \node[below] at (1,-0.3) {$x_1$};
+    \node[below] at (4,-0.3) {$x_{i-1}$};
+    \node[below] at (5,-0.3) {$x_i$};
+    \node[below] at (6,-0.3) {$x_{i+1}$};
+    \node[below] at (9,-0.3) {$x_{N_x-2}$};
+    \node[below] at (10,-0.3) {$x_{N_x-1}$};
+    
+    % Points de suspension
+    \node at (2.5,0) {$\cdots$};
+    \node at (7.5,0) {$\cdots$};
+    
+    % Delta x
+    \draw[<->] (4,0.4) -- (5,0.4);
+    \node[above] at (4.5,0.4) {$\Delta x$};
+    
+    % Interfaces
+    \draw[dashed,gray] (4.5,-0.5) -- (4.5,0.8);
+    \draw[dashed,gray] (5.5,-0.5) -- (5.5,0.8);
+    \node[above,gray] at (4.5,0.8) {\small $i-\frac{1}{2}$};
+    \node[above,gray] at (5.5,0.8) {\small $i+\frac{1}{2}$};
+\end{tikzpicture}
+\end{center}
+
+On note $T_i^n = T(x_i, t^n)$ la température au nœud $i$ à l'instant $t^n$.
+
+\subsection{Approximation des dérivées spatiales}
+
+\subsubsection{Développement de Taylor}
+
+Pour une fonction $f$ suffisamment régulière, les développements de Taylor donnent :
+
+\begin{align}
+f(x+\Delta x) &= f(x) + \Delta x \, f'(x) + \frac{(\Delta x)^2}{2} f''(x) + \frac{(\Delta x)^3}{6} f'''(x) + O(\Delta x^4) \\
+f(x-\Delta x) &= f(x) - \Delta x \, f'(x) + \frac{(\Delta x)^2}{2} f''(x) - \frac{(\Delta x)^3}{6} f'''(x) + O(\Delta x^4)
+\end{align}
+
+\subsubsection{Différences finies centrées}
+
+En soustrayant ces deux expressions :
+\begin{equation}
+\boxed{f'(x) = \frac{f(x+\Delta x) - f(x-\Delta x)}{2\Delta x} + O(\Delta x^2)}
+\end{equation}
+
+En les additionnant :
+\begin{equation}
+\boxed{f''(x) = \frac{f(x+\Delta x) - 2f(x) + f(x-\Delta x)}{(\Delta x)^2} + O(\Delta x^2)}
+\end{equation}
+
+\begin{remarque}{Ordre de précision}{}
+Les différences finies centrées sont d'ordre 2 en espace : l'erreur de troncature est en $O(\Delta x^2)$. Cela signifie que diviser $\Delta x$ par 2 divise l'erreur par 4.
+\end{remarque}
+
+\subsection{Discrétisation du terme de diffusion}
+
+Pour le terme $\frac{\partial}{\partial x}\left[k(T) \frac{\partial T}{\partial x}\right]$, on utilise une approche conservative en évaluant les flux aux interfaces des cellules.
+
+\subsubsection{Flux aux interfaces}
+
+Le flux à l'interface $i+\frac{1}{2}$ (entre les nœuds $i$ et $i+1$) est :
+
+\begin{equation}
+q_{i+1/2} = -k_{i+1/2} \, \frac{T_{i+1} - T_i}{\Delta x}
+\end{equation}
+
+où $k_{i+1/2}$ est la conductivité à l'interface.
+
+\begin{hypothese}{Moyenne arithmétique pour la conductivité}{}
+La conductivité à l'interface est approximée par la moyenne arithmétique :
+\begin{equation}
+k_{i+1/2} = \frac{k_i + k_{i+1}}{2}
+\end{equation}
+Cette approximation est d'ordre 2 pour un maillage uniforme.
+\end{hypothese}
+
+\begin{remarque}{Moyenne harmonique}{}
+Pour des milieux fortement hétérogènes, la moyenne harmonique est parfois préférée :
+\begin{equation}
+k_{i+1/2}^{\text{harm}} = \frac{2 k_i k_{i+1}}{k_i + k_{i+1}}
+\end{equation}
+Elle assure la continuité du flux aux interfaces entre matériaux différents.
+\end{remarque}
+
+\subsubsection{Bilan sur une cellule}
+
+Le bilan d'énergie sur la cellule $i$ (de largeur $\Delta x$) donne :
+
+\begin{equation}
+\rho_i c_{p,i} \, \Delta x \, \frac{\partial T_i}{\partial t} = q_{i-1/2} - q_{i+1/2}
+\end{equation}
+
+En substituant les expressions des flux :
+
+\begin{equation}
+\rho_i c_{p,i} \, \frac{\partial T_i}{\partial t} = \frac{1}{\Delta x^2} \left[ k_{i+1/2}(T_{i+1} - T_i) - k_{i-1/2}(T_i - T_{i-1}) \right]
+\end{equation}
+
+\begin{tcolorbox}[colback=blue!5,colframe=bleu,title=\textbf{Équation semi-discrète}]
+\begin{equation}
+\rho_i c_{p,i} \, \frac{\dd T_i}{\dd t} = \frac{k_{i-1/2}(T_{i-1} - T_i) + k_{i+1/2}(T_{i+1} - T_i)}{\Delta x^2}
+\label{eq:semi_discrete}
+\end{equation}
+\end{tcolorbox}
+
+%==============================================================================
+\section{Discrétisation temporelle}
+%==============================================================================
+
+\subsection{Choix du schéma temporel}
+
+Trois schémas classiques sont possibles pour discrétiser $\frac{\dd T}{\dd t}$ :
+
+\begin{center}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Schéma} & \textbf{Formulation} & \textbf{Propriétés} \\
+\midrule
+Euler explicite & $\frac{T_i^{n+1} - T_i^n}{\Delta t} = f(T^n)$ & Ordre 1, conditionnellement stable \\
+Euler implicite & $\frac{T_i^{n+1} - T_i^n}{\Delta t} = f(T^{n+1})$ & Ordre 1, inconditionnellement stable \\
+Crank-Nicolson & $\frac{T_i^{n+1} - T_i^n}{\Delta t} = \frac{1}{2}[f(T^n) + f(T^{n+1})]$ & Ordre 2, inconditionnellement stable \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Justification du schéma implicite}
+
+\begin{hypothese}{Schéma d'Euler implicite (Backward Euler)}{}
+On choisit le schéma d'Euler implicite pour les raisons suivantes :
+\begin{enumerate}
+    \item \textbf{Stabilité inconditionnelle} : aucune restriction sur le pas de temps $\Delta t$
+    \item \textbf{Robustesse} : adapté aux problèmes raides (stiff)
+    \item \textbf{Simplicité} : implémentation directe
+\end{enumerate}
+\end{hypothese}
+
+\subsubsection{Analyse de stabilité}
+
+Pour l'équation de la chaleur linéaire $\frac{\partial T}{\partial t} = \alpha \frac{\partial^2 T}{\partial x^2}$, on définit le \textbf{nombre de Fourier} :
+
+\begin{definition}{Nombre de Fourier}{}
+\begin{equation}
+\text{Fo} = \frac{\alpha \, \Delta t}{\Delta x^2}
+\end{equation}
+Il représente le rapport entre le temps physique $\Delta t$ et le temps caractéristique de diffusion sur une maille $\Delta x^2/\alpha$.
+\end{definition}
+
+\textbf{Schéma explicite} : La condition de stabilité de Von Neumann impose :
+\begin{equation}
+\text{Fo} \leq \frac{1}{2} \quad \Rightarrow \quad \Delta t \leq \frac{\Delta x^2}{2\alpha}
+\end{equation}
+
+Cette contrainte devient très restrictive pour les maillages fins ou les matériaux à haute diffusivité.
+
+\textbf{Schéma implicite} : Le schéma est \textbf{inconditionnellement stable} pour tout $\Delta t > 0$. On peut ainsi choisir le pas de temps uniquement en fonction de la précision souhaitée, sans contrainte de stabilité.
+
+\begin{remarque}{Compromis précision/stabilité}{}
+Bien que le schéma implicite soit stable pour tout $\Delta t$, un pas de temps trop grand dégrade la précision temporelle (erreur en $O(\Delta t)$). En pratique, on choisit $\Delta t$ tel que Fo $\lesssim 1$ pour une bonne précision.
+\end{remarque}
+
+\subsection{Équation discrétisée complète}
+
+En appliquant le schéma d'Euler implicite à l'équation \eqref{eq:semi_discrete} :
+
+\begin{tcolorbox}[colback=red!5,colframe=rouge,title=\textbf{Équation discrétisée (nœuds intérieurs)}]
+\begin{equation}
+\rho_i c_{p,i} \, \frac{T_i^{n+1} - T_i^n}{\Delta t} = \frac{k_{i-1/2}(T_{i-1}^{n+1} - T_i^{n+1}) + k_{i+1/2}(T_{i+1}^{n+1} - T_i^{n+1})}{\Delta x^2}
+\label{eq:discrete}
+\end{equation}
+\end{tcolorbox}
+
+En réarrangeant, on obtient pour chaque nœud intérieur $i \in \{1, \ldots, N_x-2\}$ :
+
+\begin{equation}
+-\underbrace{\frac{\Delta t \, k_{i-1/2}}{\rho_i c_{p,i} \Delta x^2}}_{a_i} T_{i-1}^{n+1} 
++ \underbrace{\left(1 + \frac{\Delta t (k_{i-1/2} + k_{i+1/2})}{\rho_i c_{p,i} \Delta x^2}\right)}_{b_i} T_i^{n+1}
+- \underbrace{\frac{\Delta t \, k_{i+1/2}}{\rho_i c_{p,i} \Delta x^2}}_{c_i} T_{i+1}^{n+1}
+= T_i^n
+\end{equation}
+
+%==============================================================================
+\section{Conditions aux limites}
+%==============================================================================
+
+\subsection{Traitement des bords}
+
+Les conditions aux limites sont appliquées aux nœuds $i=0$ (gauche) et $i=N_x-1$ (droite). Pour chaque type, on effectue un bilan d'énergie sur une \textbf{demi-maille} de bord.
+
+\begin{center}
+\begin{tikzpicture}[scale=1.5]
+    % Demi-maille gauche
+    \fill[blue!10] (0,0) rectangle (0.5,1);
+    \draw[thick] (0,0) rectangle (0.5,1);
+    \draw[fill=bleu] (0,0.5) circle (2pt);
+    \node[left] at (0,0.5) {$T_0$};
+    \draw[fill=gray] (0.5,0.5) circle (1.5pt);
+    
+    % Flux
+    \draw[->,thick,rouge] (-0.8,0.5) -- (-0.1,0.5);
+    \node[above] at (-0.45,0.5) {\color{rouge}$q_{\text{ext}}$};
+    \draw[->,thick,vert] (0.6,0.5) -- (1.1,0.5);
+    \node[above] at (0.85,0.5) {\color{vert}$q_{1/2}$};
+    
+    % Dimensions
+    \draw[<->] (0,-0.2) -- (0.5,-0.2);
+    \node[below] at (0.25,-0.2) {\small $\frac{\Delta x}{2}$};
+    
+    % Légende
+    \node at (0.25,1.3) {\small Demi-maille de bord};
+\end{tikzpicture}
+\end{center}
+
+Le bilan d'énergie sur la demi-maille de bord gauche s'écrit :
+
+\begin{equation}
+\rho_0 c_{p,0} \, \frac{\Delta x}{2} \, \frac{T_0^{n+1} - T_0^n}{\Delta t} = q_{\text{ext}} - q_{1/2}
+\end{equation}
+
+où $q_{1/2} = -k_{1/2} \frac{T_1^{n+1} - T_0^{n+1}}{\Delta x}$ est le flux conductif vers l'intérieur.
+
+\subsection{Condition de Dirichlet (température imposée)}
+
+\begin{tcolorbox}[colback=gray!5,colframe=gray!50!black]
+\textbf{Condition :} $T(x=0, t) = T_{\text{imposé}}(t)$
+
+\textbf{Discrétisation :} $T_0^{n+1} = T_{\text{imposé}}^{n+1}$
+
+\textbf{Ligne de la matrice :} $A_{0,0} = 1$, $b_0 = T_{\text{imposé}}^{n+1}$
+\end{tcolorbox}
+
+\subsection{Condition de Neumann (flux imposé)}
+
+\begin{tcolorbox}[colback=gray!5,colframe=gray!50!black]
+\textbf{Condition :} $-k \frac{\partial T}{\partial x}\Big|_{x=0} = q$ (flux entrant positif)
+
+\textbf{Bilan sur demi-maille :}
+\begin{equation}
+\rho_0 c_{p,0} \, \frac{\Delta x}{2} \, \frac{T_0^{n+1} - T_0^n}{\Delta t} = q + k_{1/2} \frac{T_1^{n+1} - T_0^{n+1}}{\Delta x}
+\end{equation}
+
+En posant $\gamma = \frac{2\Delta t}{\rho_0 c_{p,0} \Delta x}$ :
+\begin{equation}
+\left(1 + \gamma \frac{k_{1/2}}{\Delta x}\right) T_0^{n+1} - \gamma \frac{k_{1/2}}{\Delta x} T_1^{n+1} = T_0^n + \gamma \, q
+\end{equation}
+\end{tcolorbox}
+
+\subsection{Condition de convection (Robin)}
+
+\begin{tcolorbox}[colback=gray!5,colframe=gray!50!black]
+\textbf{Condition :} $-k \frac{\partial T}{\partial x}\Big|_{x=0} = h(T_0 - T_\infty)$
+
+Le flux externe est : $q_{\text{ext}} = h(T_\infty - T_0^{n+1})$
+
+\textbf{Bilan sur demi-maille :}
+\begin{equation}
+\rho_0 c_{p,0} \, \frac{\Delta x}{2} \, \frac{T_0^{n+1} - T_0^n}{\Delta t} = h(T_\infty - T_0^{n+1}) + k_{1/2} \frac{T_1^{n+1} - T_0^{n+1}}{\Delta x}
+\end{equation}
+
+Après réarrangement :
+\begin{equation}
+\left(1 + \gamma \frac{k_{1/2}}{\Delta x} + \gamma h\right) T_0^{n+1} - \gamma \frac{k_{1/2}}{\Delta x} T_1^{n+1} = T_0^n + \gamma h \, T_\infty
+\end{equation}
+\end{tcolorbox}
+
+\subsection{Condition adiabatique}
+
+\begin{tcolorbox}[colback=gray!5,colframe=gray!50!black]
+\textbf{Condition :} $\frac{\partial T}{\partial x}\Big|_{x=L} = 0$ (flux nul)
+
+C'est un cas particulier de Neumann avec $q = 0$.
+\end{tcolorbox}
+
+%==============================================================================
+\section{Rayonnement thermique}
+%==============================================================================
+
+\subsection{Loi de Stefan-Boltzmann}
+
+Le flux radiatif échangé entre une surface à la température $T_p$ et un environnement à la température $T_s$ est :
+
+\begin{tcolorbox}[colback=blue!5,colframe=bleu,title=\textbf{Loi de Stefan-Boltzmann}]
+\begin{equation}
+q_{\text{rad}} = \sigma \varepsilon (T_p^4 - T_s^4)
+\label{eq:stefan}
+\end{equation}
+\end{tcolorbox}
+
+où :
+\begin{itemize}
+    \item $\sigma = 5.670374419 \times 10^{-8}$ W/(m²·K⁴) : constante de Stefan-Boltzmann
+    \item $\varepsilon \in [0,1]$ : émissivité de la surface
+    \item $T_p$ : température de la paroi [K]
+    \item $T_s$ : température de l'environnement [K]
+\end{itemize}
+
+\begin{hypothese}{Hypothèses du modèle radiatif}{}
+\begin{enumerate}
+    \item La surface est un \textbf{corps gris} : $\varepsilon$ indépendant de la longueur d'onde
+    \item L'environnement est un \textbf{corps noir} à température uniforme $T_s$
+    \item Les effets de réflexion multiple sont négligés
+\end{enumerate}
+\end{hypothese}
+
+\subsection{Problème de non-linéarité}
+
+Le terme $T^4$ rend l'équation non-linéaire. Pour conserver un système linéaire à chaque pas de temps, on procède à une \textbf{linéarisation}.
+
+\subsubsection{Développement de Taylor}
+
+On développe $T_p^4$ autour de la température connue $T_p^n$ :
+
+\begin{equation}
+(T_p^{n+1})^4 \approx (T_p^n)^4 + 4(T_p^n)^3 (T_p^{n+1} - T_p^n)
+\end{equation}
+
+Le flux radiatif linéarisé devient :
+
+\begin{align}
+q_{\text{rad}} &\approx \sigma \varepsilon \left[ (T_p^n)^4 + 4(T_p^n)^3 (T_p^{n+1} - T_p^n) - T_s^4 \right] \\
+&= \sigma \varepsilon \left[ (T_p^n)^4 - T_s^4 \right] + 4\sigma\varepsilon (T_p^n)^3 (T_p^{n+1} - T_p^n)
+\end{align}
+
+\subsubsection{Coefficient de transfert radiatif}
+
+On définit le \textbf{coefficient de transfert radiatif linéarisé} :
+
+\begin{tcolorbox}[colback=green!5,colframe=vert,title=\textbf{Coefficient radiatif}]
+\begin{equation}
+h_{\text{rad}} = 4 \sigma \varepsilon (T_p^n)^3
+\label{eq:h_rad}
+\end{equation}
+\end{tcolorbox}
+
+\begin{remarque}{Ordre de grandeur}{}
+À température ambiante ($T \approx 300$ K) avec $\varepsilon = 0.9$ :
+\begin{equation}
+h_{\text{rad}} = 4 \times 5.67 \times 10^{-8} \times 0.9 \times 300^3 \approx 5.5 \text{ W/(m²·K)}
+\end{equation}
+À haute température ($T \approx 1000$ K) :
+\begin{equation}
+h_{\text{rad}} \approx 204 \text{ W/(m²·K)}
+\end{equation}
+Le rayonnement devient dominant à haute température.
+\end{remarque}
+
+\subsubsection{Température équivalente}
+
+Pour écrire le flux sous une forme analogue à la convection, on définit une température équivalente $T_{\text{rad,eq}}$ telle que :
+
+\begin{equation}
+q_{\text{rad}} = h_{\text{rad}} (T_p^{n+1} - T_{\text{rad,eq}})
+\end{equation}
+
+En identifiant avec l'expression linéarisée :
+
+\begin{equation}
+T_{\text{rad,eq}} = T_p^n - \frac{\sigma\varepsilon[(T_p^n)^4 - T_s^4]}{h_{\text{rad}}} = T_p^n - \frac{(T_p^n)^4 - T_s^4}{4(T_p^n)^3}
+\end{equation}
+
+\subsection{Condition limite avec rayonnement}
+
+\subsubsection{Rayonnement seul}
+
+Le bilan sur la demi-maille de bord devient :
+
+\begin{equation}
+\rho_0 c_{p,0} \, \frac{\Delta x}{2} \, \frac{T_0^{n+1} - T_0^n}{\Delta t} = h_{\text{rad}}(T_{\text{rad,eq}} - T_0^{n+1}) + k_{1/2} \frac{T_1^{n+1} - T_0^{n+1}}{\Delta x}
+\end{equation}
+
+Après réarrangement :
+\begin{equation}
+\left(1 + \gamma \frac{k_{1/2}}{\Delta x} + \gamma h_{\text{rad}}\right) T_0^{n+1} - \gamma \frac{k_{1/2}}{\Delta x} T_1^{n+1} = T_0^n + \gamma h_{\text{rad}} \, T_{\text{rad,eq}}
+\end{equation}
+
+\subsubsection{Convection + Rayonnement}
+
+Lorsque les deux modes de transfert coexistent :
+
+\begin{tcolorbox}[colback=red!5,colframe=rouge,title=\textbf{Condition convection + rayonnement}]
+\begin{equation}
+q_{\text{ext}} = h_{\text{conv}}(T_\infty - T_0^{n+1}) + h_{\text{rad}}(T_{\text{rad,eq}} - T_0^{n+1})
+\end{equation}
+
+On définit :
+\begin{align}
+h_{\text{total}} &= h_{\text{conv}} + h_{\text{rad}} \\
+T_{\text{eq}} &= \frac{h_{\text{conv}} T_\infty + h_{\text{rad}} T_{\text{rad,eq}}}{h_{\text{total}}}
+\end{align}
+
+L'équation discrétisée devient :
+\begin{equation}
+\left(1 + \gamma \frac{k_{1/2}}{\Delta x} + \gamma h_{\text{total}}\right) T_0^{n+1} - \gamma \frac{k_{1/2}}{\Delta x} T_1^{n+1} = T_0^n + \gamma h_{\text{total}} \, T_{\text{eq}}
+\end{equation}
+\end{tcolorbox}
+
+%==============================================================================
+\section{Système linéaire}
+%==============================================================================
+
+\subsection{Forme matricielle}
+
+À chaque pas de temps, on résout le système linéaire :
+
+\begin{equation}
+\mathbf{A} \cdot \mathbf{T}^{n+1} = \mathbf{b}
+\end{equation}
+
+où $\mathbf{T}^{n+1} = [T_0^{n+1}, T_1^{n+1}, \ldots, T_{N_x-1}^{n+1}]^T$.
+
+\subsection{Structure de la matrice}
+
+La matrice $\mathbf{A}$ est \textbf{tridiagonale} :
+
+\begin{equation}
+\mathbf{A} = \begin{pmatrix}
+b_0 & c_0 & 0 & \cdots & 0 \\
+a_1 & b_1 & c_1 & \ddots & \vdots \\
+0 & a_2 & b_2 & \ddots & 0 \\
+\vdots & \ddots & \ddots & \ddots & c_{N_x-2} \\
+0 & \cdots & 0 & a_{N_x-1} & b_{N_x-1}
+\end{pmatrix}
+\end{equation}
+
+\subsection{Coefficients}
+
+Pour les nœuds intérieurs ($1 \leq i \leq N_x-2$), en posant $\beta_i = \frac{\Delta t}{\rho_i c_{p,i} \Delta x^2}$ :
+
+\begin{align}
+a_i &= -\beta_i \, k_{i-1/2} \\
+b_i &= 1 + \beta_i (k_{i-1/2} + k_{i+1/2}) \\
+c_i &= -\beta_i \, k_{i+1/2}
+\end{align}
+
+Les coefficients aux bords dépendent des conditions limites (voir Section 4).
+
+\subsection{Propriétés de la matrice}
+
+\begin{itemize}
+    \item \textbf{Diagonale dominante} : $|b_i| > |a_i| + |c_i|$ pour tout $i$
+    \item \textbf{Définie positive} : garantit l'existence et l'unicité de la solution
+    \item \textbf{Tridiagonale} : résolution en $O(N_x)$ par l'algorithme de Thomas
+\end{itemize}
+
+%==============================================================================
+\section{Propriétés dépendantes de la température}
+%==============================================================================
+
+\subsection{Traitement de la non-linéarité}
+
+Lorsque $k$, $\rho$ et $c_p$ dépendent de $T$, l'équation devient non-linéaire. On utilise une \textbf{linéarisation par retard} (lagged coefficients) :
+
+\begin{hypothese}{Linéarisation par retard}{}
+Les propriétés sont évaluées à la température du pas de temps précédent :
+\begin{equation}
+k_i = k(T_i^n), \quad \rho_i = \rho(T_i^n), \quad c_{p,i} = c_p(T_i^n)
+\end{equation}
+\end{hypothese}
+
+Cette approche :
+\begin{itemize}
+    \item Conserve un système linéaire à chaque pas de temps
+    \item Est d'ordre 1 en temps (cohérent avec Euler implicite)
+    \item Est stable pour des variations modérées de propriétés
+\end{itemize}
+
+\subsection{Interpolation des propriétés}
+
+Les propriétés sont généralement tabulées à différentes températures. On utilise une \textbf{interpolation linéaire} :
+
+\begin{equation}
+k(T) = k_j + \frac{k_{j+1} - k_j}{T_{j+1} - T_j}(T - T_j), \quad T_j \leq T \leq T_{j+1}
+\end{equation}
+
+%==============================================================================
+\section{Résumé de l'algorithme}
+%==============================================================================
+
+\begin{tcolorbox}[colback=gray!5,colframe=gray!50!black,title=\textbf{Algorithme de résolution}]
+\begin{enumerate}
+    \item \textbf{Initialisation} : $T_i^0 = T_{\text{init}}$ pour tout $i$
+    
+    \item \textbf{Boucle temporelle} : pour $n = 0, 1, 2, \ldots$ jusqu'à $t_{\text{final}}$
+    \begin{enumerate}
+        \item Évaluer les propriétés $k_i, \rho_i, c_{p,i}$ à partir de $T^n$
+        \item Calculer les conductivités aux interfaces $k_{i\pm 1/2}$
+        \item Construire la matrice $\mathbf{A}$ et le vecteur $\mathbf{b}$
+        \item Appliquer les conditions aux limites (modifier ligne 0 et $N_x-1$)
+        \item Résoudre $\mathbf{A} \cdot \mathbf{T}^{n+1} = \mathbf{b}$
+        \item Mettre à jour : $T^n \leftarrow T^{n+1}$
+    \end{enumerate}
+    
+    \item \textbf{Post-traitement} : calcul des flux, visualisation
+\end{enumerate}
+\end{tcolorbox}
+
+%==============================================================================
+\section{Validation et précision}
+%==============================================================================
+
+\subsection{Erreurs de discrétisation}
+
+\begin{center}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Source} & \textbf{Ordre} & \textbf{Expression} \\
+\midrule
+Discrétisation spatiale & $O(\Delta x^2)$ & $\propto \frac{\partial^4 T}{\partial x^4} \Delta x^2$ \\
+Discrétisation temporelle & $O(\Delta t)$ & $\propto \frac{\partial^2 T}{\partial t^2} \Delta t$ \\
+Linéarisation rayonnement & $O(\Delta t)$ & $\propto \frac{\partial T}{\partial t} \Delta t$ \\
+Linéarisation propriétés & $O(\Delta t)$ & $\propto \frac{\partial k}{\partial T} \frac{\partial T}{\partial t} \Delta t$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Critères de convergence}
+
+Pour une étude de convergence, on vérifie :
+
+\begin{itemize}
+    \item \textbf{Convergence spatiale} : erreur $\propto \Delta x^2$ (ordre 2)
+    \item \textbf{Convergence temporelle} : erreur $\propto \Delta t$ (ordre 1)
+    \item \textbf{Conservation de l'énergie} : vérification du bilan global
+\end{itemize}
+
+%==============================================================================
+\section{Conclusion}
+%==============================================================================
+
+Ce document a présenté la dérivation complète du schéma numérique pour l'équation de la chaleur 1D :
+
+\begin{itemize}
+    \item \textbf{Discrétisation spatiale} : différences finies centrées (ordre 2)
+    \item \textbf{Discrétisation temporelle} : Euler implicite (ordre 1, inconditionnellement stable)
+    \item \textbf{Conditions aux limites} : Dirichlet, Neumann, convection, rayonnement
+    \item \textbf{Non-linéarités} : linéarisation par retard pour propriétés et rayonnement
+\end{itemize}
+
+Le schéma implicite, bien que d'ordre 1 en temps, offre une stabilité inconditionnelle particulièrement avantageuse pour les problèmes de conduction thermique, où les pas de temps peuvent être choisis librement selon les besoins de précision sans contrainte de stabilité.
+
+%==============================================================================
+\appendix
+\section{Constantes et unités}
+%==============================================================================
+
+\begin{center}
+\begin{tabular}{llc}
+\toprule
+\textbf{Grandeur} & \textbf{Symbole} & \textbf{Unité SI} \\
+\midrule
+Température & $T$ & K \\
+Conductivité thermique & $k$ & W/(m·K) \\
+Masse volumique & $\rho$ & kg/m³ \\
+Capacité thermique massique & $c_p$ & J/(kg·K) \\
+Diffusivité thermique & $\alpha = k/(\rho c_p)$ & m²/s \\
+Coefficient de convection & $h$ & W/(m²·K) \\
+Flux de chaleur & $q$ & W/m² \\
+Constante de Stefan-Boltzmann & $\sigma$ & W/(m²·K⁴) \\
+Émissivité & $\varepsilon$ & - \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{1cm}
+\begin{center}
+\textit{Document généré automatiquement pour le projet}\\
+\textbf{SOLVEUR-THERMIQUE-MULTICOUCHE-EULER-IMPLICITE-1D}\\
+\url{https://github.com/Mirouxe/SOLVEUR-THERMIQUE-MULTICOUCHE-EULER-IMPLICITE-1D}
+\end{center}
+
+\end{document}

@@ -73,3 +73,16 @@ Thumbs.db
 *.tmp
 *.temp
 *.log
+
+# Résultats de simulation (générés)
+results/
+
+# Archives
+archive/
+
+# Fichiers LaTeX auxiliaires
+*.aux
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+*.out
