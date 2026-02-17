@@ -63,6 +63,13 @@ TABLE_FILE_PREFIX = 'data_'
 N_SAVE_POINTS = 100
 
 # ============================================================================
+# PARAMÈTRES D'OPTIMISATION
+# ============================================================================
+
+# [OPTIM 5] Activer la parallélisation des simulations (True = parallèle, False = séquentiel)
+PARALLEL_ENABLED = True
+
+# ============================================================================
 # PARAMÈTRES DE VISUALISATION
 # ============================================================================
 

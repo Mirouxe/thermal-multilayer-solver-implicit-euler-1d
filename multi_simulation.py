@@ -15,6 +15,17 @@ Modules utilisés:
 - utils_simulation.py: Fonctions de simulation
 - post.py: Visualisation des résultats
 
+OPTIMISATIONS IMPLÉMENTÉES:
+--------------------------
+[OPTIM 1] Solveur tridiagonal (solver.py) - Résolution O(n) au lieu de O(n³)
+[OPTIM 2] Vectorisation get_properties_at_nodes (solver.py) - Interp par groupes matériaux
+[OPTIM 3] Vectorisation nœuds intérieurs (solver.py) - Construction matrice sans boucle
+[OPTIM 4] Pré-calcul indices matériaux (solver.py) - Évite lookup répétés
+[OPTIM 5] Parallélisation simulations (utils_simulation.py) - multiprocessing.Pool
+
+Paramètres d'optimisation modifiables dans param_simu.py:
+- PARALLEL_ENABLED: True/False pour activer/désactiver la parallélisation
+
 Usage:
     python multi_simulation.py
 """
@@ -23,7 +34,8 @@ from datetime import datetime
 import os
 
 from param_simu import (
-    TABLES_DIR, ESSAIS_DIR, ZONE_TO_EMPILEMENT, TABLE_COLUMNS, N_TOP_ESSAIS
+    TABLES_DIR, ESSAIS_DIR, ZONE_TO_EMPILEMENT, TABLE_COLUMNS, N_TOP_ESSAIS,
+    PARALLEL_ENABLED  # [OPTIM 5] Paramètre de parallélisation
 )
 from utils_simulation import (
     create_output_directory,
@@ -98,7 +110,12 @@ def main():
     # 5. Exécuter les simulations
     # -------------------------------------------------------------------------
     print("\n5. Exécution des simulations...")
-    all_results = run_all_simulations(zone_empilements, h_tables, test_files, verbose=True)
+    # [OPTIM 5] Utilisation de la parallélisation si activée dans param_simu.py
+    all_results = run_all_simulations(
+        zone_empilements, h_tables, test_files, 
+        verbose=True, 
+        parallel=PARALLEL_ENABLED  # [OPTIM 5] Contrôle via param_simu.PARALLEL_ENABLED
+    )
     
     # -------------------------------------------------------------------------
     # 6. Afficher le résumé
@@ -147,6 +164,13 @@ def main():
     print(f"  • calcul/  : Scripts pour relancer cette simulation")
     print(f"\nClassement: Top {N_TOP_ESSAIS} essais par matériau")
     print(f"  (Modifier N_TOP_ESSAIS dans param_simu.py pour ajuster)")
+    print(f"\nOptimisations actives:")
+    print(f"  • [OPTIM 1] Solveur tridiagonal O(n)")      # [OPTIM 1]
+    print(f"  • [OPTIM 2] Vectorisation propriétés")       # [OPTIM 2]
+    print(f"  • [OPTIM 3] Vectorisation nœuds intérieurs") # [OPTIM 3]
+    print(f"  • [OPTIM 4] Pré-calcul indices matériaux")   # [OPTIM 4]
+    print(f"  • [OPTIM 5] Parallélisation: {'OUI' if PARALLEL_ENABLED else 'NON'}")  # [OPTIM 5]
+    print(f"  (Modifier PARALLEL_ENABLED dans param_simu.py)")
     print("\nPour relancer cette simulation:")
     print(f"  cd {output_dirs['calcul']}")
     print(f"  python multi_simulation.py")

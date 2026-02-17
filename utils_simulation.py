@@ -8,6 +8,9 @@ Ce fichier contient toutes les fonctions de:
 - Calcul des conditions limites
 - Exécution des simulations
 - Gestion des dossiers de sortie
+
+OPTIMISATIONS APPLIQUÉES:
+- [OPTIM 5] Parallélisation des simulations avec multiprocessing
 """
 
 import numpy as np
@@ -15,6 +18,7 @@ import os
 import shutil
 from scipy.interpolate import LinearNDInterpolator
 from datetime import datetime
+from multiprocessing import Pool, cpu_count  # [OPTIM 5] Import pour parallélisation
 
 from solver import ThermalSolver1D
 from material_library import get_materials
@@ -24,6 +28,10 @@ from param_simu import (
     ZONE_TO_EMPILEMENT, TABLE_FILE_PREFIX
 )
 from empilement_library import get_empilement
+
+
+# [OPTIM 5] Nombre de processus parallèles (par défaut: nombre de CPU - 1)
+N_WORKERS = max(1, cpu_count() - 1)
 
 
 # ============================================================================
@@ -459,44 +467,99 @@ def run_simulation(empilement, test_data, h_table):
     return result
 
 
-def run_all_simulations(zone_empilements, h_tables, test_files, verbose=True):
+def _run_single_simulation_wrapper(args):
     """
-    Exécute toutes les combinaisons zone × essai.
+    [OPTIM 5] Wrapper pour exécuter une simulation dans un processus parallèle.
+    
+    Nécessaire car multiprocessing.Pool.map ne peut passer qu'un seul argument.
     """
-    all_results = {}
+    zone_name, emp, test_file, h_table = args
+    test_data = load_test_csv(test_file)
+    result = run_simulation(emp, test_data, h_table)
+    result['zone_name'] = zone_name
+    return zone_name, result
+
+
+def run_all_simulations(zone_empilements, h_tables, test_files, verbose=True, parallel=True):
+    """
+    [OPTIM 5] Exécute toutes les combinaisons zone × essai - VERSION PARALLÉLISÉE.
+    
+    Args:
+        zone_empilements: Dict {zone_name: empilement}
+        h_tables: Dict {zone_name: h_table}
+        test_files: Liste des fichiers d'essai
+        verbose: Afficher la progression
+        parallel: Activer la parallélisation (True par défaut)
+    
+    Returns:
+        Dict {zone_name: [results]}
+    """
+    all_results = {zone_name: [] for zone_name in zone_empilements}
     
     n_zones = len(zone_empilements)
     n_tests = len(test_files)
     n_total = n_zones * n_tests
-    count = 0
     
     if verbose:
         print(f"\n{'='*70}")
         print(f"EXÉCUTION DES SIMULATIONS")
         print(f"{'='*70}")
-        print(f"  {n_zones} zones × {n_tests} essais = {n_total} simulations\n")
+        print(f"  {n_zones} zones × {n_tests} essais = {n_total} simulations")
+        if parallel:
+            print(f"  [OPTIM 5] Mode parallèle activé ({N_WORKERS} workers)")  # [OPTIM 5]
+        print()
     
+    # [OPTIM 5] Préparer la liste des tâches à exécuter
+    tasks = []
     for zone_name, emp in zone_empilements.items():
         h_table = h_tables[zone_name]
-        all_results[zone_name] = []
+        for test_file in test_files:
+            tasks.append((zone_name, emp, test_file, h_table))
+    
+    if parallel and n_total > 1:
+        # [OPTIM 5] Exécution parallèle avec Pool de processus
+        if verbose:
+            print(f"  Lancement de {n_total} simulations en parallèle...")
+        
+        with Pool(processes=N_WORKERS) as pool:  # [OPTIM 5] Pool de workers
+            results_list = pool.map(_run_single_simulation_wrapper, tasks)  # [OPTIM 5] Map parallèle
+        
+        # [OPTIM 5] Réorganiser les résultats par zone
+        for zone_name, result in results_list:
+            all_results[zone_name].append(result)
         
         if verbose:
-            print(f"\n▶ {zone_name} -> {emp['name']}: {emp['description']}")
-        
-        for test_file in test_files:
-            count += 1
-            test_data = load_test_csv(test_file)
+            count = 0
+            for zone_name in zone_empilements:
+                emp = zone_empilements[zone_name]
+                print(f"\n▶ {zone_name} -> {emp['name']}: {emp['description']}")
+                for result in all_results[zone_name]:
+                    count += 1
+                    T = result['T']
+                    print(f"  [{count:2d}/{n_total}] {result['test_name']}... T: {T.min():.0f} - {T.max():.0f} K")
+    else:
+        # Mode séquentiel (pour debug ou si peu de simulations)
+        count = 0
+        for zone_name, emp in zone_empilements.items():
+            h_table = h_tables[zone_name]
             
             if verbose:
-                print(f"  [{count:2d}/{n_total}] {test_data['filename']}...", end=" ", flush=True)
+                print(f"\n▶ {zone_name} -> {emp['name']}: {emp['description']}")
             
-            result = run_simulation(emp, test_data, h_table)
-            result['zone_name'] = zone_name
-            all_results[zone_name].append(result)
-            
-            if verbose:
-                T = result['T']
-                print(f"T: {T.min():.0f} - {T.max():.0f} K")
+            for test_file in test_files:
+                count += 1
+                test_data = load_test_csv(test_file)
+                
+                if verbose:
+                    print(f"  [{count:2d}/{n_total}] {test_data['filename']}...", end=" ", flush=True)
+                
+                result = run_simulation(emp, test_data, h_table)
+                result['zone_name'] = zone_name
+                all_results[zone_name].append(result)
+                
+                if verbose:
+                    T = result['T']
+                    print(f"T: {T.min():.0f} - {T.max():.0f} K")
     
     if verbose:
         print(f"\n{'='*70}")
