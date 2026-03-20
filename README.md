@@ -1,4 +1,4 @@
-# 🔥 Solveur Thermique Multicouche 1D - Euler Implicite
+# Thermal Multilayer Solver Implicit Euler 1D
 
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/)
 [![NumPy](https://img.shields.io/badge/NumPy-Required-orange.svg)](https://numpy.org/)
